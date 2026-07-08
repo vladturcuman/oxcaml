@@ -1258,7 +1258,8 @@ runtime_BYTECODE_STATIC_LIBRARIES = $(addprefix $(RUNTIME_DIR)/, \
   ld.conf libcamlrun.$(A))
 runtime_BYTECODE_SHARED_LIBRARIES =
 runtime_NATIVE_STATIC_LIBRARIES = \
-  $(RUNTIME_DIR)/libasmrun.$(A) $(RUNTIME_DIR)/libcomprmarsh.$(A)
+  $(RUNTIME_DIR)/libasmrun.$(A) $(RUNTIME_DIR)/libasmrunBARE_METAL.$(A) \
+  $(RUNTIME_DIR)/libcomprmarsh.$(A)
 runtime_NATIVE_SHARED_LIBRARIES =
 
 ifeq "$(RUNTIMED)" "true"
@@ -1306,6 +1307,9 @@ libasmrund_OBJECTS = \
 libasmruni_OBJECTS = \
   $(runtime_NATIVE_C_SOURCES:.c=.ni.$(O)) $(runtime_ASM_OBJECTS:.$(O)=.i.$(O))
 
+libasmrunbaremetal_OBJECTS = \
+  $(runtime_NATIVE_C_SOURCES:.c=.nbm.$(O)) $(runtime_ASM_OBJECTS)
+
 libasmrunpic_OBJECTS = $(runtime_NATIVE_C_SOURCES:.c=.npic.$(O)) \
   $(runtime_ASM_OBJECTS:.$(O)=_libasmrunpic.$(O))
 
@@ -1320,6 +1324,7 @@ else
 endif
 ocamlrund_CPPFLAGS = -DDEBUG
 ocamlruni_CPPFLAGS = -DCAML_INSTR
+ocamlrunbaremetal_CPPFLAGS = -DCAML_BARE_METAL
 
 ## Runtime targets
 
@@ -1431,6 +1436,9 @@ $(RUNTIME_DIR)/libasmrund.$(A): $(libasmrund_OBJECTS)
 $(RUNTIME_DIR)/libasmruni.$(A): $(libasmruni_OBJECTS)
 	$(V_MKLIB)$(call MKLIB,$@, $^)
 
+$(RUNTIME_DIR)/libasmrunBARE_METAL.$(A): $(libasmrunbaremetal_OBJECTS)
+	$(V_MKLIB)$(call MKLIB,$@, $^)
+
 $(RUNTIME_DIR)/libasmrun_pic.$(A): $(libasmrunpic_OBJECTS)
 	$(V_MKLIB)$(call MKLIB,$@, $^)
 
@@ -1466,6 +1474,11 @@ $(RUNTIME_DIR)/%.ni.$(O): OC_CFLAGS += $(OC_NATIVE_CFLAGS)
 $(RUNTIME_DIR)/%.ni.$(O): OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlruni_CPPFLAGS)
 $(DEPDIR)/$(RUNTIME_DIR)/%.ni.$(D): \
   OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlruni_CPPFLAGS)
+
+$(RUNTIME_DIR)/%.nbm.$(O): OC_CFLAGS += $(OC_NATIVE_CFLAGS)
+$(RUNTIME_DIR)/%.nbm.$(O): OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlrunbaremetal_CPPFLAGS)
+$(DEPDIR)/$(RUNTIME_DIR)/%.nbm.$(D): \
+  OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlrunbaremetal_CPPFLAGS)
 
 $(RUNTIME_DIR)/%.npic.$(O): OC_CFLAGS += $(OC_NATIVE_CFLAGS) $(SHAREDLIB_CFLAGS)
 $(RUNTIME_DIR)/%.npic.$(O): OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS)
@@ -1514,7 +1527,7 @@ $(DEPDIR)/runtime:
 
 runtime_OBJECT_TYPES = % %.b %.bd %.bi %.bpic
 ifeq "$(NATIVE_COMPILER)" "true"
-runtime_OBJECT_TYPES += %.n %.nd %.ni %.np %.npic
+runtime_OBJECT_TYPES += %.n %.nd %.ni %.nbm %.np %.npic
 endif
 
 $(foreach runtime_OBJECT_TYPE, $(runtime_OBJECT_TYPES), \
@@ -1574,6 +1587,9 @@ endif
 runtime_DEP_FILES += $(addsuffix d, $(runtime_DEP_FILES)) \
              $(addsuffix i, $(runtime_DEP_FILES)) \
              $(addsuffix pic, $(runtime_DEP_FILES))
+ifeq "$(NATIVE_COMPILER)" "true"
+runtime_DEP_FILES += $(addsuffix .nbm, $(basename $(runtime_NATIVE_C_SOURCES)))
+endif
 runtime_DEP_FILES := $(addsuffix .$(D), $(runtime_DEP_FILES))
 
 ifeq "$(COMPUTE_DEPS)" "true"

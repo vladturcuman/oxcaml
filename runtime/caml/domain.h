@@ -28,7 +28,9 @@ extern "C" {
 #include "mlvalues.h"
 #include "domain_state.h"
 
-#ifdef MULTIDOMAIN
+
+
+#if defined(MULTIDOMAIN)
 #ifdef ARCH_SIXTYFOUR
 #define Max_domains_def 128
 #else

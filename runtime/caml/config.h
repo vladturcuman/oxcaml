@@ -161,6 +161,11 @@ typedef uint64_t uintnat;
 
 #endif /* CAML_CONFIG_H_NO_TYPEDEFS */
 
+
+#if defined(CAML_BARE_METAL)
+#undef MULTIDOMAIN
+#endif
+
 /* Endianness of floats */
 
 /* ARCH_FLOAT_ENDIANNESS encodes the byte order of doubles as follows:
@@ -215,7 +220,8 @@ typedef uint64_t uintnat;
 #endif
 
 /* Whether to use guard pages for fiber stacks */
-#if !defined(USE_MMAP_MAP_STACK) && defined(NATIVE_CODE) && !defined(STACK_CHECKS_ENABLED)
+#if !defined(CAML_BARE_METAL) && !defined(USE_MMAP_MAP_STACK) \
+  && defined(NATIVE_CODE) && !defined(STACK_CHECKS_ENABLED)
 #define STACK_GUARD_PAGES
 #endif
 

@@ -41,7 +41,7 @@
 typedef cpuset_t cpu_set_t;
 #endif
 #if defined(HAS_SYS_EPOLL_H) && defined(HAS_SYS_TIMERFD_H) \
-    && defined(HAS_SYS_EVENTFD_H)
+    && defined(HAS_SYS_EVENTFD_H) && !defined(CAML_BARE_METAL)
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <sys/eventfd.h>
@@ -81,6 +81,19 @@ typedef cpuset_t cpu_set_t;
 #include "caml/sync.h"
 #include "caml/weak.h"
 #include "sync_posix.h"
+
+#ifdef CAML_BARE_METAL
+#define getpid() 0
+#define pthread_self() ((pthread_t)0)
+#define pthread_equal(a, b) 0
+#define pthread_detach(t) ((void)0)
+#define pthread_join(t, r) ((void)0)
+#define pthread_cancel(t) 0
+#define pthread_sigmask(how, set, oldset) ((void)0)
+#define sigfillset(set) ((void)0)
+#define pthread_exit(result) caml_fatal_error("pthread_exit on bare metal")
+#define usleep(usec) ((void)0)
+#endif
 
 /* Check that the domain_state structure was laid out without padding,
    since the runtime assumes this in computing offsets */
@@ -1122,6 +1135,7 @@ struct domain_ml_values {
 #define Term_mutex(sync) (&Field(sync, 1))
 #define Term_condition(sync) (&Field(sync, 2))
 
+#ifndef CAML_BARE_METAL
 static void init_domain_ml_values(struct domain_ml_values* ml_values,
                                   value callback, value term_sync)
 {
@@ -1137,6 +1151,7 @@ static void free_domain_ml_values(struct domain_ml_values* ml_values)
   caml_remove_generational_global_root(&ml_values->term_sync);
   caml_stat_free(ml_values);
 }
+#endif /* !CAML_BARE_METAL */
 
 /* This is the structure of the data exchanged between the parent
    domain and child domain during domain_spawn. Some fields are 'in'
@@ -1161,6 +1176,7 @@ struct domain_startup_params {
  * signalled and the backup thread wakes up to process the
  * interrupt. */
 
+#ifndef CAML_BARE_METAL
 static void* backup_thread_func(void* v)
 {
   dom_internal* di = (dom_internal*)v;
@@ -1197,7 +1213,9 @@ static void* backup_thread_func(void* v)
 
   return 0;
 }
+#endif /* !CAML_BARE_METAL */
 
+#ifndef CAML_BARE_METAL
 static void install_backup_thread (dom_internal* di)
 {
   int err;
@@ -1239,6 +1257,7 @@ static void install_backup_thread (dom_internal* di)
     pthread_detach(di->backup_thread);
   }
 }
+#endif /* !CAML_BARE_METAL */
 
 static void caml_domain_initialize_default(void)
 {
@@ -1293,6 +1312,7 @@ CAMLexport _Atomic caml_timing_hook caml_domain_terminated_hook =
 
 static void domain_terminate(void);
 
+#ifndef CAML_BARE_METAL
 static value make_finished(value res_or_exn)
 {
   CAMLparam0();
@@ -1406,9 +1426,15 @@ static void* domain_thread_func(void* v)
 #endif
   return 0;
 }
+#endif /* !CAML_BARE_METAL */
 
 CAMLprim value caml_domain_spawn(value callback, value term_sync)
 {
+#ifdef CAML_BARE_METAL
+  (void)callback;
+  (void)term_sync;
+  caml_failwith("Domain.spawn is not supported on bare metal");
+#else
   CAMLparam2 (callback, term_sync);
   struct domain_startup_params p;
   pthread_t th;
@@ -1462,6 +1488,7 @@ CAMLprim value caml_domain_spawn(value callback, value term_sync)
   caml_plat_cond_free(&p.cond);
 
   CAMLreturn (Val_long(p.unique_id));
+#endif
 }
 
 CAMLprim value caml_ml_domain_id(value unit)
@@ -2248,7 +2275,9 @@ static bool tick_thread_wait(void)
 
 #else /* !HAS_INTERRUPTIBLE_TICK */
 
+#ifndef CAML_BARE_METAL
 static int tick_thread_open_fds(void) { return 0; }
+#endif
 static int tick_thread_close_fds(void) { return 0; }
 static void tick_thread_wake(void) {}
 
@@ -2263,6 +2292,9 @@ void caml_process_tick(void)
 
 CAMLextern void caml_stop_tick_thread(void)
 {
+#ifdef CAML_BARE_METAL
+  return;
+#else
   caml_plat_lock_blocking(&tick_thread.mutex);
   if (tick_thread.running) {
     tick_thread.running = false;
@@ -2275,6 +2307,7 @@ CAMLextern void caml_stop_tick_thread(void)
     atomic_store_release(&tick_thread.stop, false);
   }
   caml_plat_unlock(&tick_thread.mutex);
+#endif
 }
 
 static void tick_thread_reset(void)
@@ -2328,6 +2361,7 @@ CAMLprim value caml_effective_tick_interval_usec_bytecode(value v_unit) {
   return Val_long(caml_effective_tick_interval_usec());
 }
 
+#ifndef CAML_BARE_METAL
 static void caml_do_tick_all_domains(void)
 {
   /* See [caml_interrupt_all_signal_safe] for why reading from this array can
@@ -2397,9 +2431,13 @@ static void* caml_tick(void *arg)
 
   return NULL;
 }
+#endif /* !CAML_BARE_METAL */
 
 CAMLextern int caml_start_tick_thread(void)
 {
+#ifdef CAML_BARE_METAL
+  return 0;
+#else
   caml_plat_lock_non_blocking(&tick_thread.mutex);
   if (!atomic_load_acquire(&tick_thread.enabled)) {
     caml_plat_unlock(&tick_thread.mutex);
@@ -2444,6 +2482,7 @@ CAMLextern int caml_start_tick_thread(void)
   caml_plat_unlock(&tick_thread.mutex);
 
   return 0;
+#endif
 }
 
 CAMLprim value caml_enable_tick_thread(value v_enable)
@@ -2635,8 +2674,10 @@ static void domain_terminate (void)
       /* Remove this domain from stw_domains */
       remove_from_stw_domains(domain_self);
 
+#ifndef CAML_BARE_METAL
       CAMLassert (domain_self->backup_thread_running);
       domain_self->backup_thread_running = 0;
+#endif
 
       /* We must signal domain termination before releasing [all_domains_lock]:
          after that, this domain will no longer take part in STWs and emitting
@@ -2783,6 +2824,10 @@ CAMLprim value caml_domain_tls_get(value unused)
 
 CAMLprim value caml_recommended_domain_count(value unused)
 {
+#ifdef CAML_BARE_METAL
+  (void)unused;
+  return Val_long(1);
+#else
   intnat n = -1;
 
 #if defined(HAS_GNU_GETAFFINITY_NP) || defined(HAS_BSD_GETAFFINITY_NP)
@@ -2812,6 +2857,7 @@ CAMLprim value caml_recommended_domain_count(value unused)
     n = caml_params->max_domains;
 
   return (Val_long(n));
+#endif
 }
 
 CAMLprim value caml_max_domain_count(value unused)
