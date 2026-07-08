@@ -199,9 +199,15 @@ char * caml_executable_name(void)
 
 char *caml_secure_getenv (char const *var)
 {
-  (void)var;
-  return NULL;
+  /* Delegate to the C library's getenv: the default environment is empty
+     on bare metal, but this lets the application's stubs provide one
+     (e.g. to set OCAMLRUNPARAM before caml_startup). */
+  return getenv(var);
 }
+
+#ifndef NSEC_PER_SEC
+#define NSEC_PER_SEC 1000000000ULL
+#endif
 
 uint64_t caml_time_counter(void)
 {
