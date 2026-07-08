@@ -353,6 +353,7 @@ static void add_next_to_stw_domains(void)
 #endif
 }
 
+#ifndef CAML_BARE_METAL
 static void remove_from_stw_domains(dom_internal* dom) {
   int i;
   for(i=0; stw_domains.domains[i]!=dom; ++i) {
@@ -366,6 +367,7 @@ static void remove_from_stw_domains(dom_internal* dom) {
       stw_domains.domains[stw_domains.participating_domains];
   stw_domains.domains[stw_domains.participating_domains] = dom;
 }
+#endif /* !CAML_BARE_METAL */
 
 static dom_internal* next_free_domain(void) {
   if (stw_domains.participating_domains == caml_params->max_domains)
@@ -1310,9 +1312,9 @@ CAMLexport void (*caml_domain_send_interrupt_hook)(caml_domain_state*) =
 CAMLexport _Atomic caml_timing_hook caml_domain_terminated_hook =
   (caml_timing_hook)NULL;
 
+#ifndef CAML_BARE_METAL
 static void domain_terminate(void);
 
-#ifndef CAML_BARE_METAL
 static value make_finished(value res_or_exn)
 {
   CAMLparam0();
@@ -2620,6 +2622,7 @@ int caml_domain_is_terminating (void)
   return domain_terminating(domain_self);
 }
 
+#ifndef CAML_BARE_METAL
 static void domain_terminate (void)
 {
   caml_domain_state* domain_state = domain_self->state;
@@ -2748,6 +2751,7 @@ static void domain_terminate (void)
      the shared_heap lockfree fast paths */
   (void)caml_atomic_counter_decr(&caml_num_domains_running);
 }
+#endif /* !CAML_BARE_METAL */
 
 CAMLprim value caml_ml_domain_cpu_relax(value t)
 {
