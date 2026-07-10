@@ -1324,7 +1324,8 @@ else
 endif
 ocamlrund_CPPFLAGS = -DDEBUG
 ocamlruni_CPPFLAGS = -DCAML_INSTR
-ocamlrunbaremetal_CPPFLAGS = -DCAML_BARE_METAL
+ocamlrunbaremetal_CPPFLAGS = -DCAML_BARE_METAL -U_FORTIFY_SOURCE
+ocamlrunbaremetal_CFLAGS = -std=gnu17
 
 ## Runtime targets
 
@@ -1475,7 +1476,7 @@ $(RUNTIME_DIR)/%.ni.$(O): OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlruni_CPPFL
 $(DEPDIR)/$(RUNTIME_DIR)/%.ni.$(D): \
   OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlruni_CPPFLAGS)
 
-$(RUNTIME_DIR)/%.nbm.$(O): OC_CFLAGS += $(OC_NATIVE_CFLAGS)
+$(RUNTIME_DIR)/%.nbm.$(O): OC_CFLAGS += $(OC_NATIVE_CFLAGS) $(ocamlrunbaremetal_CFLAGS)
 $(RUNTIME_DIR)/%.nbm.$(O): OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlrunbaremetal_CPPFLAGS)
 $(DEPDIR)/$(RUNTIME_DIR)/%.nbm.$(D): \
   OC_CPPFLAGS += $(OC_NATIVE_CPPFLAGS) $(ocamlrunbaremetal_CPPFLAGS)
