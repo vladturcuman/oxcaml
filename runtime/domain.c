@@ -213,6 +213,7 @@ Caml_inline void domain_set_pending(dom_internal *d)
 { atomic_store_release(&d->pending, 1); }
 
 uintnat caml_tick_use_usleep = 0;
+#ifndef CAML_BARE_METAL
 static struct {
   /* This mutex protects mutation of `thread_id` and `running` */
   caml_plat_mutex mutex;
@@ -238,6 +239,7 @@ static struct {
   -1, -1, -1
 #endif
 };
+#endif /* !CAML_BARE_METAL */
 
 static struct {
   /* enter barrier for STW sections, participating domains arrive into
@@ -527,6 +529,7 @@ static void free_minor_heap(void) {
 
   check_minor_heap();
 
+#ifndef CAML_BARE_METAL
   /* free old minor heap.
      instead of unmapping the heap, we decommit it, so there's
      no race whereby other code could attempt to reuse the memory. */
@@ -534,6 +537,7 @@ static void free_minor_heap(void) {
       (void*)domain_self->minor_heap_area_start,
       Bsize_wsize(domain_state->minor_heap_wsz),
       "minor reservation");
+#endif
 
   domain_state->young_start   = NULL;
   domain_state->young_end     = NULL;
@@ -557,12 +561,14 @@ static int allocate_minor_heap(asize_t wsize) {
                   "Allocating minor heap: %"
                   ARCH_SIZET_PRINTF_FORMAT "uk words\n", wsize / 1024);
 
+#ifndef CAML_BARE_METAL
   char name[32];
   snprintf(name, sizeof name, "minor heap %d", domain_self->id);
   if (!caml_mem_commit(
           (void*)domain_self->minor_heap_area_start, Bsize_wsize(wsize), name)) {
     return -1;
   }
+#endif
 
 #ifdef DEBUG
   {
@@ -898,6 +904,7 @@ fail_domain:
   caml_plat_unlock(&all_domains_lock);
 }
 
+#ifndef CAML_BARE_METAL
 CAMLexport void caml_reset_domain_lock(void)
 {
   dom_internal* self = domain_self;
@@ -921,6 +928,7 @@ CAMLexport void caml_reset_domain_lock(void)
 
   return;
 }
+#endif /* !CAML_BARE_METAL */
 
 /* minor heap initialization and resizing */
 
@@ -1136,6 +1144,7 @@ struct domain_ml_values {
 #define Term_mutex(sync) (&Field(sync, 1))
 #define Term_condition(sync) (&Field(sync, 2))
 
+#ifdef MULTIDOMAIN
 static void init_domain_ml_values(struct domain_ml_values* ml_values,
                                   value callback, value term_sync)
 {
@@ -1254,6 +1263,7 @@ static void install_backup_thread (dom_internal* di)
     pthread_detach(di->backup_thread);
   }
 }
+#endif /* MULTIDOMAIN */
 
 static void terminate_backup_thread(dom_internal *di)
 {
@@ -1322,6 +1332,7 @@ CAMLexport void (*caml_domain_send_interrupt_hook)(caml_domain_state*) =
 CAMLexport _Atomic caml_timing_hook caml_domain_terminated_hook =
   (caml_timing_hook)NULL;
 
+#ifdef MULTIDOMAIN
 static value make_finished(caml_result result)
 {
   CAMLparam0();
@@ -1514,6 +1525,14 @@ CAMLprim value caml_domain_spawn(value callback, value term_sync)
 
   CAMLreturn (Val_long(p.unique_id));
 }
+#else
+CAMLprim value caml_domain_spawn(value callback, value term_sync)
+{
+  (void)callback;
+  (void)term_sync;
+  caml_failwith("Domain.spawn is not supported by a single-domain runtime");
+}
+#endif /* MULTIDOMAIN */
 
 CAMLprim value caml_ml_domain_id(value unit)
 {
@@ -2158,6 +2177,32 @@ void caml_handle_gc_interrupt(void)
    [false] argument. In this case, all tick requests will be ignored.
  */
 
+#ifdef CAML_BARE_METAL
+
+value caml_process_tick_exn(void)
+{
+  return Val_unit;
+}
+
+CAMLextern uintnat caml_effective_tick_interval_usec(void)
+{
+  return 0;
+}
+
+CAMLprim value caml_enable_tick_thread(value v_enable)
+{
+  (void)v_enable;
+  return Val_unit;
+}
+
+CAMLprim intnat caml_domain_set_tick_interval_usec(intnat interval_usec)
+{
+  (void)interval_usec;
+  return 0;
+}
+
+#else /* !CAML_BARE_METAL */
+
 #ifdef HAS_INTERRUPTIBLE_TICK
 
 /* Interruptible wait helpers for the tick thread.
@@ -2533,6 +2578,8 @@ CAMLprim value caml_domain_set_tick_interval_usec_bytecode(value v_interval_usec
   CAMLreturn(Val_unit);
 }
 
+#endif /* !CAML_BARE_METAL */
+
 /* Backup thread */
 
 CAMLexport int caml_bt_is_in_blocking_section(void)
@@ -2543,7 +2590,11 @@ CAMLexport int caml_bt_is_in_blocking_section(void)
 
 CAMLexport int caml_bt_is_self(void)
 {
+#ifdef CAML_BARE_METAL
+  return 0;
+#else
   return pthread_equal(domain_self->backup_thread, pthread_self());
+#endif
 }
 
 CAMLexport intnat caml_domain_is_multicore (void)
@@ -2604,6 +2655,7 @@ CAMLexport void caml_bt_exit_ocaml(void)
   }
 }
 
+#ifndef CAML_BARE_METAL
 /* default handler for unix_fork, will be called by unix_fork. */
 static void caml_atfork_default(void)
 {
@@ -2616,6 +2668,7 @@ static void caml_atfork_default(void)
 }
 
 CAMLexport void (*caml_atfork_hook)(void) = caml_atfork_default;
+#endif /* !CAML_BARE_METAL */
 
 static inline int domain_terminating(dom_internal *d) {
   return d->terminating;
@@ -2711,7 +2764,13 @@ void caml_domain_terminate(bool last)
       /* Remove this domain from stw_domains. */
       remove_from_stw_domains(domain_self);
 
-      CAMLassert (backup_thread_running(domain_self));
+      /* Backup threads are installed lazily: a spawned domain installs
+         its own in [domain_thread_func], and domain 0 only gets one
+         when it first spawns ([caml_domain_spawn]).  Spawned domains
+         ([last] is false) therefore always have one here, but domain 0
+         -- which reaches this point via [caml_domain_terminate(true)]
+         at shutdown -- has one only if the program ever spawned. */
+      CAMLassert (last || backup_thread_running(domain_self));
 
       /* We must signal domain termination before releasing [all_domains_lock]:
          after that, this domain will no longer take part in STWs and emitting
@@ -2799,6 +2858,7 @@ void caml_domain_terminate(bool last)
     caml_atomic_counter_decr(&caml_num_domains_running);
 }
 
+#ifdef MULTIDOMAIN
 /* Try and terminate the currently running domain.
    This is only invoked when extra domains are left running while the
    main one is terminating. In this case, we are not in a state where
@@ -2846,6 +2906,7 @@ void caml_stop_all_domains(void)
 
   caml_plat_assert_all_locks_unlocked();
 }
+#endif /* MULTIDOMAIN */
 
 bool caml_free_domains(void)
 {
@@ -2953,6 +3014,7 @@ CAMLprim value caml_domain_tls_get(value unused)
   return domain_root_get(&Caml_state->tls_state);
 }
 
+#ifdef MULTIDOMAIN
 CAMLprim value caml_recommended_domain_count(value unused)
 {
   intnat n = -1;
@@ -2985,6 +3047,12 @@ CAMLprim value caml_recommended_domain_count(value unused)
 
   return (Val_long(n));
 }
+#else
+CAMLprim value caml_recommended_domain_count(value unused)
+{
+  return (Val_long(1));
+}
+#endif /* MULTIDOMAIN */
 
 CAMLprim value caml_max_domain_count(value unused)
 {

@@ -54,6 +54,9 @@ const struct caml_params* const caml_params = &params;
 
 static size_t get_pthreads_stack_size_in_bytes(void)
 {
+#ifdef CAML_BARE_METAL
+  return 8 * 1024 * 1024;
+#else
   pthread_attr_t attr;
   size_t res =
     // default value, retrieved from a recent system (May 2024)
@@ -63,6 +66,7 @@ static size_t get_pthreads_stack_size_in_bytes(void)
     pthread_attr_destroy(&attr);
   }
   return res;
+#endif
 }
 
 static void init_startup_params(void)
@@ -73,6 +77,7 @@ static void init_startup_params(void)
 
   // Initial stack sizes only apply in native code with stack checks disabled.
 
+#ifdef HAS_GETRLIMIT
   struct rlimit rlimit;
   if (getrlimit(RLIMIT_STACK, &rlimit)) {
     // default value, retrieved from a recent system (May 2024)
@@ -84,6 +89,10 @@ static void init_startup_params(void)
       caml_init_main_stack_wsz = Wsize_bsize(rlimit.rlim_cur);
     }
   }
+#else
+  // default value, retrieved from a recent system (May 2024)
+  caml_init_main_stack_wsz = Wsize_bsize(8192 * 1024);
+#endif
   if (caml_init_main_stack_wsz > Max_stack_def) {
     caml_init_main_stack_wsz = Max_stack_def;
   }
@@ -286,10 +295,13 @@ CAMLexport void caml_shutdown(void)
 
   call_registered_value("Pervasives.do_at_exit");
   call_registered_value("Thread.at_shutdown");
+#ifdef MULTIDOMAIN
   if (!caml_domain_alone()) {
     caml_gc_log("Some domains have not been joined prior to shutdown");
     caml_stop_all_domains();
-  } else {
+  } else
+#endif
+  {
     /* These calls are not safe to use if there are domains left running */
     caml_domain_terminate(true);
     caml_finalise_freelist();
