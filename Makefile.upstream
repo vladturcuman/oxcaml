@@ -1246,7 +1246,10 @@ runtime_CPPFLAGS = -DCAMLDLLIMPORT= -DIN_CAML_RUNTIME
 ocamlrund_CPPFLAGS = -DDEBUG
 ocamlruni_CPPFLAGS = -DCAML_INSTR
 ocamlrunbaremetal_CPPFLAGS = -DCAML_BARE_METAL
-ocamlrunbaremetal_CFLAGS = -std=gnu17 -march=armv8-a
+ocamlrunbaremetal_CFLAGS = -std=gnu17
+ifneq (,$(findstring aarch64,$(TARGET)))
+ocamlrunbaremetal_CFLAGS += -mcpu=cortex-a72   # Versal APU, ARMv8.0 — no LSE/RCpc
+endif
 
 ## Runtime targets
 
