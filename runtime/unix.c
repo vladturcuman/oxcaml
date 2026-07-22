@@ -124,6 +124,23 @@ char *caml_secure_getenv (char const *var)
   return NULL;
 }
 
+
+/* No wall clock on bare metal: print seconds since the origin of
+   [caml_bare_metal_time_ns] (e.g. boot) instead of a calendar date. */
+int caml_format_timestamp(char* buf, size_t sz, int formatted)
+{
+  uint64_t ns = caml_bare_metal_time_ns();
+  ARCH_UINT64_TYPE sec = (ARCH_UINT64_TYPE)(ns / 1000000000);
+  unsigned usec = (unsigned)((ns % 1000000000) / 1000);
+  if (formatted) {
+    return snprintf(buf, sz, "[%" ARCH_INT64_PRINTF_FORMAT "u.%06u] ",
+                    sec, usec);
+  } else {
+    return snprintf(buf, sz, "%" ARCH_INT64_PRINTF_FORMAT "u.%06u ",
+                    sec, usec);
+  }
+}
+
 void caml_init_os_params(void)
 {
   caml_plat_pagesize = Page_size;
@@ -131,6 +148,13 @@ void caml_init_os_params(void)
   caml_plat_hugepagesize = 0;
 }
 
+/* Malloc-backed "memory mapping".  Two differences from anonymous mmap
+   to be aware of:
+   - the memory is *not* zeroed (the runtime's current callers do not
+     rely on fresh mappings being zeroed - debug builds even poison
+     committed memory - but new callers must not assume otherwise);
+   - there is no reserve-vs-commit distinction, so reservations are
+     physically allocated up front. */
 void *caml_plat_mem_map(uintnat size, uintnat flags, const char* name)
 {
   (void)flags;

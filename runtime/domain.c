@@ -2179,9 +2179,9 @@ void caml_handle_gc_interrupt(void)
 
 #ifdef CAML_BARE_METAL
 
-value caml_process_tick_exn(void)
+caml_result caml_process_tick_res(void)
 {
-  return Val_unit;
+  return Result_unit;
 }
 
 CAMLextern uintnat caml_effective_tick_interval_usec(void)
@@ -2764,13 +2764,7 @@ void caml_domain_terminate(bool last)
       /* Remove this domain from stw_domains. */
       remove_from_stw_domains(domain_self);
 
-      /* Backup threads are installed lazily: a spawned domain installs
-         its own in [domain_thread_func], and domain 0 only gets one
-         when it first spawns ([caml_domain_spawn]).  Spawned domains
-         ([last] is false) therefore always have one here, but domain 0
-         -- which reaches this point via [caml_domain_terminate(true)]
-         at shutdown -- has one only if the program ever spawned. */
-      CAMLassert (last || backup_thread_running(domain_self));
+      CAMLassert (backup_thread_running(domain_self));
 
       /* We must signal domain termination before releasing [all_domains_lock]:
          after that, this domain will no longer take part in STWs and emitting

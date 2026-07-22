@@ -82,9 +82,15 @@ static int caml_bare_open(const char_os *path, int flags, int perm)
   return caml_bare_syscall_error();
 }
 
+static int caml_bare_close(int fd)
+{
+  (void)fd;
+  return 0;
+}
+
 #undef open_os
 #define open_os caml_bare_open
-#define close(fd) ((void)(fd), caml_bare_syscall_error())
+#define close caml_bare_close
 #define getenv(var) ((void)(var), NULL)
 #endif
 
@@ -574,8 +580,6 @@ void caml_sys_init(const char_os * exe_name, char_os **argv)
 #endif
 
 #ifdef CAML_BARE_METAL
-
-extern uint64_t caml_bare_metal_time_ns(void);
 
 double caml_sys_time_include_children_unboxed(value include_children)
 {
