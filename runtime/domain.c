@@ -2179,9 +2179,12 @@ void caml_handle_gc_interrupt(void)
 
 #ifdef CAML_BARE_METAL
 
-caml_result caml_process_tick_res(void)
+/* No tick thread on bare metal.  NB: oxcaml main has renamed this to
+   [caml_process_tick_res] (returning [caml_result]); when rebasing past
+   that rename, switch this stub back to the [_res] form. */
+value caml_process_tick_exn(void)
 {
-  return Result_unit;
+  return Val_unit;
 }
 
 CAMLextern uintnat caml_effective_tick_interval_usec(void)
