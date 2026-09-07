@@ -2724,7 +2724,11 @@ void caml_domain_terminate(bool last)
 
     /* No need to check for interrupts if we are the last domain running. */
     if (last) {
+#ifdef CAML_BARE_METAL
+      CAML_EV_LIFECYCLE(EV_DOMAIN_TERMINATE, 0); /* no OS PID */
+#else
       CAML_EV_LIFECYCLE(EV_DOMAIN_TERMINATE, getpid());
+#endif
       break;
     }
 
@@ -2766,7 +2770,11 @@ void caml_domain_terminate(bool last)
       /* We must signal domain termination before releasing [all_domains_lock]:
          after that, this domain will no longer take part in STWs and emitting
          an event could race with runtime events teardown. */
+#ifdef CAML_BARE_METAL
+      CAML_EV_LIFECYCLE(EV_DOMAIN_TERMINATE, 0); /* no OS PID */
+#else
       CAML_EV_LIFECYCLE(EV_DOMAIN_TERMINATE, getpid());
+#endif
     }
     caml_plat_unlock(&all_domains_lock);
   }
