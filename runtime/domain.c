@@ -276,8 +276,10 @@ static struct {
 static caml_plat_mutex all_domains_lock = CAML_PLAT_MUTEX_INITIALIZER;
 static caml_plat_cond all_domains_cond = CAML_PLAT_COND_INITIALIZER;
 static atomic_uintnat /* dom_internal* */ stw_leader = 0;
+#ifdef MULTIDOMAIN
 static uintnat stw_requests_suspended = 0; /* protected by all_domains_lock */
 static caml_plat_cond requests_suspended_cond = CAML_PLAT_COND_INITIALIZER;
+#endif
 static dom_internal* all_domains;
 static atomic_intnat domains_exiting = 0;
 
@@ -648,6 +650,7 @@ static void domain_create(uintnat initial_minor_heap_wsize,
      set atomically */
   caml_plat_lock_blocking(&all_domains_lock);
 
+#ifdef MULTIDOMAIN
   /* How many STW sections we are willing to wait for, any more are
      prevented from happening */
 #define Max_stws_before_suspend 2
@@ -673,6 +676,7 @@ static void domain_create(uintnat initial_minor_heap_wsize,
       break;
     }
   }
+#endif /* MULTIDOMAIN */
 
   d = next_free_domain();
 
@@ -1525,7 +1529,7 @@ CAMLprim value caml_domain_spawn(value callback, value term_sync)
 
   CAMLreturn (Val_long(p.unique_id));
 }
-#else
+#elif !defined(CAML_BARE_METAL)
 CAMLprim value caml_domain_spawn(value callback, value term_sync)
 {
   (void)callback;
@@ -1563,6 +1567,7 @@ static void global_barrier_flip(barrier_status sense)
   caml_plat_barrier_flip(&stw_request.barrier, sense);
 }
 
+#ifdef MULTIDOMAIN
 /* wait until another domain flips the sense */
 static void global_barrier_wait(barrier_status sense, int num_participating)
 {
@@ -1577,30 +1582,36 @@ static void global_barrier_wait(barrier_status sense, int num_participating)
   /* just block */
   caml_plat_barrier_wait_sense(&stw_request.barrier, sense);
 }
+#endif /* MULTIDOMAIN */
 
 void caml_enter_global_barrier(int num_participating)
 {
   CAMLassert(num_participating == stw_request.num_domains);
   barrier_status b = global_barrier_begin();
   barrier_status sense = b & BARRIER_SENSE_BIT;
-  if (global_barrier_is_nth(b, num_participating)) {
-    global_barrier_flip(sense);
-  } else {
+#ifdef MULTIDOMAIN
+  if (!global_barrier_is_nth(b, num_participating)) {
     global_barrier_wait(sense, num_participating);
+    return;
   }
+#endif
+  CAMLassert(global_barrier_is_nth(b, num_participating));
+  global_barrier_flip(sense);
 }
 
 barrier_status caml_global_barrier_and_check_final(int num_participating)
 {
   CAMLassert(num_participating == stw_request.num_domains);
   barrier_status b = global_barrier_begin();
-  if (global_barrier_is_nth(b, num_participating)) {
-    CAMLassert(b); /* always nonzero */
-    return b;
-  } else {
+#ifdef MULTIDOMAIN
+  if (!global_barrier_is_nth(b, num_participating)) {
     global_barrier_wait(b & BARRIER_SENSE_BIT, num_participating);
     return 0;
   }
+#endif
+  CAMLassert(global_barrier_is_nth(b, num_participating));
+  CAMLassert(b); /* always nonzero */
+  return b;
 }
 
 void caml_global_barrier_release_as_final(barrier_status b)
@@ -1631,6 +1642,7 @@ static void decrement_stw_domains_still_processing(void)
   }
 }
 
+#ifdef MULTIDOMAIN
 /* Wait for other running domains to stop, called by interrupted
    domains before entering the STW section */
 static void stw_wait_for_running(caml_domain_state* domain)
@@ -1676,13 +1688,16 @@ static void stw_api_barrier(caml_domain_state* domain)
   }
   CAML_EV_END(EV_STW_API_BARRIER);
 }
+#endif /* MULTIDOMAIN */
 
 static void stw_handler(caml_domain_state* domain)
 {
   CAML_EV_BEGIN(EV_STW_HANDLER);
+#ifdef MULTIDOMAIN
   if (!caml_plat_barrier_is_released(&stw_request.domains_still_running)) {
     stw_api_barrier(domain);
   }
+#endif
 
   #ifdef DEBUG
   Caml_state->inside_stw_handler = 1;
@@ -1803,6 +1818,7 @@ int caml_try_run_on_all_domains_with_spin_work(
     return 0;
   }
 
+#ifdef MULTIDOMAIN
   while (1) {
     /* see if there is a stw_leader already */
     if (atomic_load_acquire(&stw_leader)) {
@@ -1822,6 +1838,7 @@ int caml_try_run_on_all_domains_with_spin_work(
 
     break;
   }
+#endif /* MULTIDOMAIN */
 
   /* we have the lock and can claim the stw_leader */
   atomic_store_release(&stw_leader, (uintnat)domain_self);
@@ -1840,12 +1857,14 @@ int caml_try_run_on_all_domains_with_spin_work(
   caml_atomic_counter_init(&stw_request.num_domains_still_processing,
                            stw_domains.participating_domains);
 
+#ifdef MULTIDOMAIN
   int is_alone = stw_request.num_domains == 1;
   int should_sync = sync && !is_alone;
 
   if (should_sync) {
     caml_plat_barrier_reset(&stw_request.domains_still_running);
   }
+#endif
 
   if( leader_setup ) {
     leader_setup(domain_state, data);
@@ -1888,10 +1907,12 @@ int caml_try_run_on_all_domains_with_spin_work(
   */
   caml_plat_unlock(&all_domains_lock);
 
+#ifdef MULTIDOMAIN
   /* arrive at enter barrier */
   if (should_sync) {
     stw_api_barrier(domain_state);
   }
+#endif
 
   #ifdef DEBUG
   domain_state->inside_stw_handler = 1;
@@ -2177,31 +2198,7 @@ void caml_handle_gc_interrupt(void)
    [false] argument. In this case, all tick requests will be ignored.
  */
 
-#ifdef CAML_BARE_METAL
-
-caml_result caml_process_tick_res(void)
-{
-  return Result_unit;
-}
-
-CAMLextern uintnat caml_effective_tick_interval_usec(void)
-{
-  return 0;
-}
-
-CAMLprim value caml_enable_tick_thread(value v_enable)
-{
-  (void)v_enable;
-  return Val_unit;
-}
-
-CAMLprim intnat caml_domain_set_tick_interval_usec(intnat interval_usec)
-{
-  (void)interval_usec;
-  return 0;
-}
-
-#else /* !CAML_BARE_METAL */
+#ifndef CAML_BARE_METAL
 
 #ifdef HAS_INTERRUPTIBLE_TICK
 
@@ -2702,8 +2699,10 @@ void caml_domain_terminate(bool last)
   caml_domain_stop_hook();
   call_timing_hook(&caml_domain_terminated_hook);
 
+#ifndef CAML_BARE_METAL
   /* Reset the tick interval back to 0, since we no longer want ticks */
   caml_domain_set_tick_interval_usec(0);
+#endif
 
   while (!finished) {
     caml_finish_sweeping();
