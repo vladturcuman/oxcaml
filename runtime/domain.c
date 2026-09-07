@@ -1552,9 +1552,11 @@ CAMLprim value caml_ml_domain_index(value unit)
 
 /* Global barrier implementation */
 
+#if defined(MULTIDOMAIN) || defined(DEBUG)
 Caml_inline int global_barrier_is_nth(barrier_status b, int n) {
   return (b & ~BARRIER_SENSE_BIT) == n;
 }
+#endif
 
 static barrier_status global_barrier_begin(void)
 {
