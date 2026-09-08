@@ -1529,7 +1529,7 @@ CAMLprim value caml_domain_spawn(value callback, value term_sync)
 
   CAMLreturn (Val_long(p.unique_id));
 }
-#elif !defined(CAML_BARE_METAL)
+#else
 CAMLprim value caml_domain_spawn(value callback, value term_sync)
 {
   (void)callback;
@@ -2200,7 +2200,23 @@ void caml_handle_gc_interrupt(void)
    [false] argument. In this case, all tick requests will be ignored.
  */
 
-#ifndef CAML_BARE_METAL
+#ifdef CAML_BARE_METAL
+
+/* Stdlib.Domain retains these primitives even in single-domain programs. */
+CAMLextern uintnat caml_effective_tick_interval_usec(void)
+{
+  return 0;
+}
+
+CAMLprim intnat caml_domain_set_tick_interval_usec(intnat interval_usec)
+{
+  if (interval_usec != 0) {
+    caml_failwith("Domain.Tick is not supported by a bare-metal runtime");
+  }
+  return 0;
+}
+
+#else /* !CAML_BARE_METAL */
 
 #ifdef HAS_INTERRUPTIBLE_TICK
 
@@ -2415,10 +2431,6 @@ CAMLextern uintnat caml_effective_tick_interval_usec(void) {
   return res;
 }
 
-CAMLprim value caml_effective_tick_interval_usec_bytecode(value v_unit) {
-  return Val_long(caml_effective_tick_interval_usec());
-}
-
 static void caml_do_tick_all_domains(void)
 {
   /* See [caml_interrupt_all_signal_safe] for why reading from this array can
@@ -2569,13 +2581,17 @@ CAMLprim intnat caml_domain_set_tick_interval_usec(intnat interval_usec)
   return 0;
 }
 
+#endif /* !CAML_BARE_METAL */
+
+CAMLprim value caml_effective_tick_interval_usec_bytecode(value v_unit) {
+  return Val_long(caml_effective_tick_interval_usec());
+}
+
 CAMLprim value caml_domain_set_tick_interval_usec_bytecode(value v_interval_usec) {
   CAMLparam1(v_interval_usec);
   caml_domain_set_tick_interval_usec(Long_val(v_interval_usec));
   CAMLreturn(Val_unit);
 }
-
-#endif /* !CAML_BARE_METAL */
 
 /* Backup thread */
 
